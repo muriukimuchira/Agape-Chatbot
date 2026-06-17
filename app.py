@@ -7,6 +7,7 @@ from nltk.classify import NaiveBayesClassifier
 
 # Download necessary text parsing resources inside the cloud instance
 nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
 nltk.download('stopwords', quiet=True)
 
 # 1. Operational Database Matrix
