@@ -25,7 +25,7 @@ AGAPE_DATABASE = {
 # 3. Initialize Conversation State Parameters (The Bot Memory)
 if "messages" not in st.session_state:
     route_menu = (
-        "👋 Welcome to **Agape Enterprise Automated Ticketing Portal**!\n\n"
+        "👋 Welcome to **Agape Enterprise Automated Ticketing P**!\n\n"
         "Please choose or type your preferred travel route from our active network below:\n\n"
         "• **Nairobi** ➔ Mombasa\n"
         "• **Nairobi** ➔ Kisumu\n"
