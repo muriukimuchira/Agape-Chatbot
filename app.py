@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import nltk
+import random
 from datetime import date
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
@@ -49,6 +50,11 @@ if "booking_data" not in st.session_state:
         "route": None, "class": None, "time": None, "date": None,
         "passenger_count": 1, "extra_passengers_details": []
     }
+
+# Helper function to generate standardized booking reference IDs
+def generate_booking_id():
+    serial = random.randint(100, 999)
+    return f"AGP2026{serial}"
 
 # 4. Configure Basic Streamlit Page Framing
 st.set_page_config(page_title="Agape Enterprise Portal", page_icon="🚌")
@@ -138,7 +144,6 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # 7. Live State Workflow Engine Chat Logic
-# Disable standard chat input box when filling profiles out on the sidebar form container
 input_disabled = st.session_state.step in ["COLLECT_PRIMARY_DETAILS", "COLLECT_EXTRA_DETAILS"]
 placeholder_msg = "Please use the form panel on the left sidebar to enter details..." if input_disabled else "Type your reply here..."
 
@@ -178,7 +183,7 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
         st.session_state.step = "COLLECT_TIME"
         bot_reply = f"Understood. For that route, what departure time do you prefer? Available options are:\n" + "\n".join([f"* {t}" for t in available_times])
 
-    # STATE 3: TIME SELECTION -> ALERTS USER TO MOVE TO SIDEBAR
+    # STATE 3: TIME SELECTION
     elif st.session_state.step == "COLLECT_TIME":
         st.session_state.booking_data["time"] = user_input
         st.session_state.step = "COLLECT_PRIMARY_DETAILS"
@@ -216,7 +221,43 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
     # STATE 6: PROCESS FINAL SUMMARY OR CANCELLATION CONFIRMATION
     elif st.session_state.step == "CONFIRMATION":
         if "yes" in clean_input or "correct" in clean_input or "y" == clean_input:
-            bot_reply = "🎉 **Thank you. Your booking request has been recorded and will be processed by Agape Enterprise.**"
+            route = st.session_state.booking_data["route"]
+            travel_class = st.session_state.booking_data["class"]
+            count = st.session_state.booking_data["passenger_count"]
+            price_per_head = AGAPE_DATABASE[route][travel_class]
+            total_fare = price_per_head * count
+            class_title = "Luxury VIP Class" if travel_class == "vip" else "Standard Class"
+            
+            # Formulate the Official requested Layout Receipt block
+            receipt = (
+                f"### 🎉 BOOKING CONFIRMATION\n\n"
+                f"**Booking ID:** {generate_booking_id()}\n\n"
+                f"**Route:** {route.title()}\n"
+                f"**Travel Class:** {class_title}\n"
+                f"**Departure Time:** {st.session_state.booking_data['time']}\n"
+                f"**Number of Passengers:** {count}\n\n"
+                f"**Passenger 1:**\n"
+                f"Name: {st.session_state.booking_data['primary_name']}\n"
+                f"Phone: {st.session_state.booking_data['primary_phone']}\n"
+                f"Preferred Time: {st.session_state.booking_data['time']}\n\n"
+            )
+            
+            if st.session_state.booking_data["extra_passengers_details"]:
+                for i, p in enumerate(st.session_state.booking_data["extra_passengers_details"], 2):
+                    receipt += (
+                        f"**Passenger {i}:**\n"
+                        f"Name: {p['name']}\n"
+                        f"Phone: {p['phone']}\n"
+                        f"Preferred Time: {st.session_state.booking_data['time']}\n\n"
+                    )
+            
+            receipt += (
+                f"**Total Amount Paid:** KES {total_fare:,}\n\n"
+                f"**Booking Status:** Confirmed"
+            )
+            bot_reply = receipt
+            
+            # Reset system state parameters back to step 1
             st.session_state.step = "COLLECT_ROUTE"
             st.session_state.booking_data = {"primary_name": None, "primary_id": None, "primary_phone": None, "route": None, "class": None, "time": None, "date": None, "passenger_count": 1, "extra_passengers_details": []}
         else:
@@ -229,7 +270,7 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
         st.markdown(bot_reply)
     st.session_state.messages.append({"role": "assistant", "content": bot_reply})
 
-# INTERNAL BACKEND REDIRECTION SHORTCUT (Renders the invoice summary directly)
+# INTERNAL BACKEND REDIRECTION SHORTCUT (Renders the confirmation check layout)
 if st.session_state.step == "CONFIRMATION" and len(st.session_state.messages) > 0 and st.session_state.messages[-1]["content"] in ["All companion manifests updated! Compiling operational invoice configurations...", "Understood. Compiling your configuration parameters...", "Perfect. Generating your booking documentation now..."]:
     route = st.session_state.booking_data["route"]
     travel_class = st.session_state.booking_data["class"]
@@ -240,7 +281,7 @@ if st.session_state.step == "CONFIRMATION" and len(st.session_state.messages) > 
     class_title = "Luxury VIP Class" if travel_class == "vip" else "Standard Class"
     
     summary = (
-        f"### 📋 Booking Summary\n\n"
+        f"### 📋 Booking Summary Verification\n\n"
         f"* **Name:** {st.session_state.booking_data['primary_name']}\n"
         f"* **ID / Passport:** {st.session_state.booking_data['primary_id']}\n"
         f"* **Phone Number:** {st.session_state.booking_data['primary_phone']}\n"
