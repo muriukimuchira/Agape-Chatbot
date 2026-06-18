@@ -2,7 +2,9 @@ import streamlit as st
 import re
 import nltk
 import random
+import io
 from datetime import date
+from docx import Document  # Lightweight library for Word Document compilation
 
 # 1. Essential Cloud Dependencies Downloader
 nltk.download('punkt', quiet=True)
@@ -53,13 +55,57 @@ def generate_booking_id():
     serial = random.randint(100, 999)
     return f"AGP2026{serial}"
 
+# Helper to build a downloadable CSV file structure
+def convert_to_csv(data, booking_id, total_fare, route, class_title):
+    csv_data = (
+        f"Booking Parameter,Details\n"
+        f"Booking ID,{booking_id}\n"
+        f"Route,{route.title()}\n"
+        f"Travel Class,{class_title}\n"
+        f"Departure Time,{data['time']}\n"
+        f"Travel Date,{data['date']}\n"
+        f"Number of Passengers,{data['passenger_count']}\n"
+        f"Primary Passenger Name,{data['primary_name']}\n"
+        f"Primary Passenger Phone,{data['primary_phone']}\n"
+        f"Total Amount Paid (KES),{total_fare}\n"
+        f"Booking Status,Confirmed\n"
+    )
+    return csv_data
+
+# Helper to build a clean Word Document receipt printout
+def convert_to_docx(data, booking_id, total_fare, route, class_title):
+    doc = Document()
+    doc.add_heading('AGAPE ENTERPRISE - BOOKING RECEIPT', level=1)
+    
+    doc.add_paragraph(f"Booking ID: {booking_id}")
+    doc.add_paragraph(f"Booking Status: Confirmed\n")
+    
+    doc.add_heading('Trip Details', level=2)
+    doc.add_paragraph(f"Route: {route.title()}")
+    doc.add_paragraph(f"Travel Class: {class_title}")
+    doc.add_paragraph(f"Departure Time: {data['time']}")
+    doc.add_paragraph(f"Travel Date: {data['date']}")
+    
+    doc.add_heading('Passenger Manifest', level=2)
+    doc.add_paragraph(f"Passenger 1 (Primary): {data['primary_name']} ({data['primary_phone']})")
+    
+    if data["extra_passengers_details"]:
+        for i, p in enumerate(data["extra_passengers_details"], 2):
+            doc.add_paragraph(f"Passenger {i}: {p['name']} (ID/Passport: {p['id']})")
+            
+    doc.add_heading('Financial Summary', level=2)
+    doc.add_paragraph(f"Total Amount Paid: KES {total_fare:,}")
+    
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
 # 4. Configure Basic Streamlit Page Framing
 st.set_page_config(page_title="Agape Enterprise Portal", page_icon="🚌")
 st.title("🚌 Agape Enterprise Customer Portal")
 st.caption("Inquire about active routes, bus schedules, and direct pricing metrics instantly.")
 
 # 5. DYNAMIC SIDEBAR DATA COLLECTION PANEL
-# Moving the state tracking logic outside the form handler ensures Streamlit processes clicks correctly
 with st.sidebar:
     st.header("📋 Passenger Portal")
     
@@ -81,17 +127,15 @@ with st.sidebar:
                     st.session_state.booking_data["primary_phone"] = form_phone
                     st.session_state.booking_data["date"] = form_date.strftime("%d %B %Y")
                     
-                    # Append user action to visible chat message list
                     st.session_state.messages.append({
                         "role": "user", 
                         "content": f"📝 Submitted Primary Details:\n* Name: {form_name}\n* ID: {form_id}\n* Phone: {form_phone}\n* Date: {st.session_state.booking_data['date']}"
                     })
                     
-                    # Force step advancement immediately
                     st.session_state.step = "COLLECT_COUNT"
                     st.session_state.messages.append({
                         "role": "assistant", 
-                        "content": f"Thank you, {form_name}. Your info has been saved. **How many passengers are booking in total (including yourself)?** Please type the total number in the chat bar below."
+                        "content": f"Thank you, {form_name}. Your profile has been saved. **How many passengers are booking in total (including yourself)?** Please type the total number in the chat bar below."
                     })
                     st.rerun()
                 else:
@@ -179,7 +223,7 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
         st.session_state.step = "COLLECT_TIME"
         bot_reply = f"Understood. For that route, what departure time do you prefer? Available options are:\n" + "\n".join([f"* {t}" for t in available_times])
 
-    # STATE 3: TIME SELECTION -> TRIGGERS SIDEBAR UNLOCK
+    # STATE 3: TIME SELECTION
     elif st.session_state.step == "COLLECT_TIME":
         st.session_state.booking_data["time"] = user_input
         st.session_state.step = "COLLECT_PRIMARY_DETAILS"
@@ -222,10 +266,12 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
             price_per_head = AGAPE_DATABASE[route][travel_class]
             total_fare = price_per_head * count
             class_title = "Luxury VIP Class" if travel_class == "vip" else "Standard Class"
+            b_id = generate_booking_id()
             
+            # Formulate the requested structural confirmation matrix layout
             bot_reply = (
                 f"### 🎉 BOOKING CONFIRMATION\n\n"
-                f"**Booking ID:** {generate_booking_id()}\n\n"
+                f"**Booking ID:** {b_id}\n\n"
                 f"**Route:** {route.title()}\n"
                 f"**Travel Class:** {class_title}\n"
                 f"**Departure Time:** {st.session_state.booking_data['time']}\n"
@@ -250,7 +296,26 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
                 f"**Booking Status:** Confirmed"
             )
             
-            # Full Reset
+            # Generate raw data formats for download utilities before dropping state dictionaries
+            csv_string = convert_to_csv(st.session_state.booking_data, b_id, total_fare, route, class_title)
+            docx_bytes = convert_to_docx(st.session_state.booking_data, b_id, total_fare, route, class_title)
+            
+            # Mount immediate interface side action items
+            st.sidebar.success("🎉 Document Generated!")
+            st.sidebar.download_button(
+                label="📥 Download Receipt (CSV)",
+                data=csv_string,
+                file_name=f"{b_id}_Receipt.csv",
+                mime="text/csv"
+            )
+            st.sidebar.download_button(
+                label="📥 Download Receipt (Word)",
+                data=docx_bytes,
+                file_name=f"{b_id}_Receipt.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            
+            # Full Clean System State Parameters Reset
             st.session_state.step = "COLLECT_ROUTE"
             st.session_state.booking_data = {"primary_name": None, "primary_id": None, "primary_phone": None, "route": None, "class": None, "time": None, "date": None, "passenger_count": 1, "extra_passengers_details": []}
         else:
@@ -263,7 +328,7 @@ if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
             st.markdown(bot_reply)
         st.session_state.messages.append({"role": "assistant", "content": bot_reply})
 
-# 8. ISOLATED SUMMARY COMPILER (Executes automatically when state reaches billing)
+# 8. ISOLATED SUMMARY COMPILER
 if st.session_state.step == "PROCESS_SUMMARY_INVOICE":
     route = st.session_state.booking_data["route"]
     travel_class = st.session_state.booking_data["class"]
