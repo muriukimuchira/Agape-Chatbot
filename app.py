@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import nltk
+from datetime import date
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.classify import NaiveBayesClassifier
@@ -54,14 +55,94 @@ st.set_page_config(page_title="Agape Enterprise Portal", page_icon="🚌")
 st.title("🚌 Agape Enterprise Customer Portal")
 st.caption("Inquire about active routes, bus schedules, and direct pricing metrics instantly.")
 
-# 5. Render Conversation History Bubbles
+# 5. DYNAMIC SIDEBAR DATA COLLECTION PANEL (Triggers on detail steps)
+with st.sidebar:
+    st.header("📋 Passenger Passenger Portal")
+    
+    if st.session_state.step == "COLLECT_PRIMARY_DETAILS":
+        st.subheader("Main Booker Profile Form")
+        st.info("Please fill in your primary booking records here to progress.")
+        
+        with st.form("primary_passenger_form"):
+            form_name = st.text_input("Full Names:")
+            form_id = st.text_input("National ID/ Passport:")
+            form_phone = st.text_input("Phone Number:")
+            form_date = st.date_input("Travel Date:", min_value=date.today())
+            
+            submit_primary = st.form_submit_button("Submit Primary Records")
+            
+            if submit_primary:
+                if form_name and form_id and form_phone:
+                    st.session_state.booking_data["primary_name"] = form_name
+                    st.session_state.booking_data["primary_id"] = form_id
+                    st.session_state.booking_data["primary_phone"] = form_phone
+                    st.session_state.booking_data["date"] = form_date.strftime("%d %B %Y")
+                    
+                    # Update Chat Sequence Log
+                    user_log_text = f"Submitted Details:\n* Full Name: {form_name}\n* ID: {form_id}\n* Phone: {form_phone}\n* Date: {st.session_state.booking_data['date']}"
+                    st.session_state.messages.append({"role": "user", "content": user_log_text})
+                    
+                    st.session_state.step = "COLLECT_COUNT"
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": f"Thank you, {form_name}. Your profile has been validated. How many passengers are booking in total (including yourself)?"
+                    })
+                    st.rerun()
+                else:
+                    st.error("Validation Error: Please fill in Full Name, ID, and Phone Number before saving.")
+
+    elif st.session_state.step == "COLLECT_EXTRA_DETAILS":
+        current_idx = st.session_state.current_extra_index
+        total_needed = st.session_state.booking_data["passenger_count"]
+        
+        st.subheader(f"Manifest Profile: Passenger {current_idx} of {total_needed}")
+        
+        with st.form("extra_passenger_form"):
+            ext_name = st.text_input("Full Names:")
+            ext_id = st.text_input("National ID/ Passport:")
+            ext_phone = st.text_input("Phone Number (Optional):", value="N/A")
+            
+            submit_extra = st.form_submit_button(f"Save Passenger {current_idx} Records")
+            
+            if submit_extra:
+                if ext_name and ext_id:
+                    st.session_state.booking_data["extra_passengers_details"].append({
+                        "name": ext_name, "id": ext_id, "phone": ext_phone
+                    })
+                    
+                    # Update Chat Logs
+                    user_log_text = f"Passenger {current_idx} Records:\n* Full Name: {ext_name}\n* ID: {ext_id}\n* Phone: {ext_phone}"
+                    st.session_state.messages.append({"role": "user", "content": user_log_text})
+                    
+                    if current_idx < total_needed:
+                        st.session_state.current_extra_index += 1
+                        st.session_state.messages.append({
+                            "role": "assistant", 
+                            "content": f"Logged Passenger {current_idx}. Please enter records for **Passenger {st.session_state.current_extra_index}** in the sidebar form panel."
+                        })
+                    else:
+                        st.session_state.step = "CONFIRMATION"
+                        st.session_state.messages.append({
+                            "role": "assistant", 
+                            "content": "All companion manifests updated! Compiling operational invoice configurations..."
+                        })
+                    st.rerun()
+                else:
+                    st.error("Validation Error: Companion full name and identification reference code mandatory.")
+    else:
+        st.write("The active configuration console panels initialize dynamically when you reach the data collection steps.")
+
+# 6. Render Conversation History Bubbles
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 6. Live State Workflow Engine Logic
-if user_input := st.chat_input("Type your reply here..."):
-    # Append user chat bubble
+# 7. Live State Workflow Engine Chat Logic
+# Disable standard chat input box when filling profiles out on the sidebar form container
+input_disabled = st.session_state.step in ["COLLECT_PRIMARY_DETAILS", "COLLECT_EXTRA_DETAILS"]
+placeholder_msg = "Please use the form panel on the left sidebar to enter details..." if input_disabled else "Type your reply here..."
+
+if user_input := st.chat_input(placeholder_msg, disabled=input_disabled):
     with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -73,7 +154,6 @@ if user_input := st.chat_input("Type your reply here..."):
     if st.session_state.step == "COLLECT_ROUTE":
         matched_route = None
         for route in AGAPE_DATABASE.keys():
-            # Check for the complete route phrase or individual component match pairs
             if route in clean_input or (route.split(" to ")[0] in clean_input and route.split(" to ")[1] in clean_input):
                 matched_route = route
                 break
@@ -98,27 +178,13 @@ if user_input := st.chat_input("Type your reply here..."):
         st.session_state.step = "COLLECT_TIME"
         bot_reply = f"Understood. For that route, what departure time do you prefer? Available options are:\n" + "\n".join([f"* {t}" for t in available_times])
 
-    # STATE 3: TIME SELECTION -> NOW PROMPTS FOR PRIMARY BOOKER DETAILS NEXT
+    # STATE 3: TIME SELECTION -> ALERTS USER TO MOVE TO SIDEBAR
     elif st.session_state.step == "COLLECT_TIME":
         st.session_state.booking_data["time"] = user_input
         st.session_state.step = "COLLECT_PRIMARY_DETAILS"
-        bot_reply = "Excellent. As the primary passenger and payer, please enter your details first in this exact format:\n**Full Name, National ID/Passport Number, Phone Number, Travel Date**\n\n*(e.g., John Mwangi, ID 12345678, 0712345678, 20 June 2026)*"
+        bot_reply = "Excellent. 📍 **Please look at the form on the left sidebar panel of your screen.** I have unlocked your customized layout form. Enter your details there and click submit!"
 
-    # STATE 4: MAIN BOOKER DETAILS COLLECTION
-    elif st.session_state.step == "COLLECT_PRIMARY_DETAILS":
-        parts = [p.strip() for p in user_input.split(",")]
-        if len(parts) >= 4:
-            st.session_state.booking_data["primary_name"] = parts[0]
-            st.session_state.booking_data["primary_id"] = parts[1]
-            st.session_state.booking_data["primary_phone"] = parts[2]
-            st.session_state.booking_data["date"] = parts[3]
-            
-            st.session_state.step = "COLLECT_COUNT"
-            bot_reply = f"Thank you, {parts[0]}. How many passengers would you like to book for in total (including yourself)?"
-        else:
-            bot_reply = "Missing Information: Please ensure you provide all 4 fields separated by commas:\n**Full Name, ID, Phone, Travel Date**"
-
-    # STATE 5: PASSENGER COUNT VALIDATION
+    # STATE 4: PASSENGER COUNT VALIDATION
     elif st.session_state.step == "COLLECT_COUNT":
         numbers = re.findall(r'\b\d+\b', clean_input)
         if numbers and int(numbers[0]) > 0:
@@ -135,75 +201,19 @@ if user_input := st.chat_input("Type your reply here..."):
         else:
             bot_reply = "Data Validation Warning: Passenger count must be a positive whole number. Please enter a valid number (e.g., 2):"
 
-    # STATE 6: EXTRA PASSENGER CONSENT CHECK
+    # STATE 5: EXTRA PASSENGER CONSENT CHECK
     elif st.session_state.step == "ASK_EXTRA_DETAILS_CONSENT":
         if "yes" in clean_input or "y" == clean_input:
             st.session_state.step = "COLLECT_EXTRA_DETAILS"
             st.session_state.current_extra_index = 2
-            bot_reply = f"Please enter details for **Passenger 2** in this format:\n**Full Name, ID/Passport Number, Phone Number (Optional)**"
+            bot_reply = "Understood. 📍 **Please check the sidebar form layout on the left** to fill out your details for Passenger 2."
+            st.rerun()
         else:
             st.session_state.step = "CONFIRMATION"
             bot_reply = "Understood. Compiling your configuration parameters..."
             st.rerun()
 
-    # STATE 7: LOOP THROUGH EXTRA PASSENGERS
-    elif st.session_state.step == "COLLECT_EXTRA_DETAILS":
-        parts = [p.strip() for p in user_input.split(",")]
-        if len(parts) >= 2:
-            name = parts[0]
-            id_no = parts[1]
-            phone = parts[2] if len(parts) > 2 else "N/A"
-            st.session_state.booking_data["extra_passengers_details"].append({"name": name, "id": id_no, "phone": phone})
-            
-            total_needed = st.session_state.booking_data["passenger_count"]
-            current_idx = st.session_state.current_extra_index
-            
-            if current_idx < total_needed:
-                st.session_state.current_extra_index += 1
-                bot_reply = f"Got it. Please enter details for **Passenger {st.session_state.current_extra_index}**:\n**Full Name, ID/Passport Number, Phone Number (Optional)**"
-            else:
-                st.session_state.step = "CONFIRMATION"
-                bot_reply = "All additional passenger details logged! Compiling summary metrics..."
-                st.rerun()
-        else:
-            bot_reply = "Missing Information: Please ensure you provide at least **Full Name, ID/Passport Number** separated by a comma."
-
-    # STATE 8: GENERATE PRICING MATRIX SUMMARY AND VERIFY
-    if st.session_state.step == "CONFIRMATION" and bot_reply in ["All additional passenger details logged! Compiling summary metrics...", "Understood. Compiling your configuration parameters...", "Perfect. Generating your booking documentation now..."]:
-        route = st.session_state.booking_data["route"]
-        travel_class = st.session_state.booking_data["class"]
-        count = st.session_state.booking_data["passenger_count"]
-        
-        price_per_head = AGAPE_DATABASE[route][travel_class]
-        total_fare = price_per_head * count
-        class_title = "Luxury VIP Class" if travel_class == "vip" else "Standard Class"
-        
-        summary = (
-            f"### 📋 Booking Summary\n\n"
-            f"* **Name:** {st.session_state.booking_data['primary_name']}\n"
-            f"* **Phone Number:** {st.session_state.booking_data['primary_phone']}\n"
-            f"* **Route:** {route.title()}\n"
-            f"* **Travel Date:** {st.session_state.booking_data['date']}\n"
-            f"* **Class:** {class_title}\n"
-            f"* **Departure Time:** {st.session_state.booking_data['time']}\n"
-            f"* **Number of Passengers:** {count}\n\n"
-        )
-        
-        if st.session_state.booking_data["extra_passengers_details"]:
-            summary += "👥 **Additional Passenger Manifest:**\n"
-            for i, p in enumerate(st.session_state.booking_data["extra_passengers_details"], 2):
-                summary += f"- Pax {i}: {p['name']} (ID: {p['id']})\n"
-            summary += "\n"
-            
-        summary += (
-            f"### 💵 Fare Breakdown\n"
-            f"* **Price per Passenger:** KES {price_per_head:,}\n"
-            f"* **Passengers:** {count}\n"
-            f"**TOTAL FARE:** KES {total_fare:,}\n\n"
-            f"Please confirm that the above information is correct. (Yes/No)"
-        )
-        bot_reply = summary
-
+    # STATE 6: PROCESS FINAL SUMMARY OR CANCELLATION CONFIRMATION
     elif st.session_state.step == "CONFIRMATION":
         if "yes" in clean_input or "correct" in clean_input or "y" == clean_input:
             bot_reply = "🎉 **Thank you. Your booking request has been recorded and will be processed by Agape Enterprise.**"
@@ -214,9 +224,47 @@ if user_input := st.chat_input("Type your reply here..."):
             st.session_state.step = "COLLECT_ROUTE"
             st.session_state.booking_data = {"primary_name": None, "primary_id": None, "primary_phone": None, "route": None, "class": None, "time": None, "date": None, "passenger_count": 1, "extra_passengers_details": []}
 
-    # Render Bot Bubble response
+    # Render Bot Bubble response for text-based states
     with st.chat_message("assistant"):
         st.markdown(bot_reply)
     st.session_state.messages.append({"role": "assistant", "content": bot_reply})
 
-
+# INTERNAL BACKEND REDIRECTION SHORTCUT (Renders the invoice summary directly)
+if st.session_state.step == "CONFIRMATION" and len(st.session_state.messages) > 0 and st.session_state.messages[-1]["content"] in ["All companion manifests updated! Compiling operational invoice configurations...", "Understood. Compiling your configuration parameters...", "Perfect. Generating your booking documentation now..."]:
+    route = st.session_state.booking_data["route"]
+    travel_class = st.session_state.booking_data["class"]
+    count = st.session_state.booking_data["passenger_count"]
+    
+    price_per_head = AGAPE_DATABASE[route][travel_class]
+    total_fare = price_per_head * count
+    class_title = "Luxury VIP Class" if travel_class == "vip" else "Standard Class"
+    
+    summary = (
+        f"### 📋 Booking Summary\n\n"
+        f"* **Name:** {st.session_state.booking_data['primary_name']}\n"
+        f"* **ID / Passport:** {st.session_state.booking_data['primary_id']}\n"
+        f"* **Phone Number:** {st.session_state.booking_data['primary_phone']}\n"
+        f"* **Route:** {route.title()}\n"
+        f"* **Travel Date:** {st.session_state.booking_data['date']}\n"
+        f"* **Class:** {class_title}\n"
+        f"* **Departure Time:** {st.session_state.booking_data['time']}\n"
+        f"* **Number of Passengers:** {count}\n\n"
+    )
+    
+    if st.session_state.booking_data["extra_passengers_details"]:
+        summary += "👥 **Additional Passenger Manifest:**\n"
+        for i, p in enumerate(st.session_state.booking_data["extra_passengers_details"], 2):
+            summary += f"- Pax {i}: {p['name']} (ID: {p['id']})\n"
+        summary += "\n"
+        
+    summary += (
+        f"### 💵 Fare Breakdown\n"
+        f"* **Price per Passenger:** KES {price_per_head:,}\n"
+        f"* **Passengers:** {count}\n"
+        f"**TOTAL FARE:** KES {total_fare:,}\n\n"
+        f"Please confirm that the above information is correct. (Yes/No)"
+    )
+    
+    with st.chat_message("assistant"):
+        st.markdown(summary)
+    st.session_state.messages.append({"role": "assistant", "content": summary})
